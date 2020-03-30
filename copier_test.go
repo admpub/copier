@@ -408,6 +408,10 @@ func TestNested(t *testing.T) {
 	}
 	b := parentB{}
 	copier.Copy(&b, &a)
+	if b.A != a.A {
+		panic(`no match`)
+	}
+
 	com.Dump(b)
 
 	a1 := parentC{
@@ -417,5 +421,7 @@ func TestNested(t *testing.T) {
 
 	copier.Copy(&b1, &a1)
 	com.Dump(b1)
-	panic(``)
+	if b1.A != a1.A {
+		panic(`no match`)
+	}
 }
