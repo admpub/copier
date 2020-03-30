@@ -72,8 +72,10 @@ func Copy(toValue interface{}, fromValue interface{}) (err error) {
 			if fromType.Kind() != reflect.Struct && toType.Kind() != reflect.Struct {
 				set(dest, source)
 			} else {
-				fromTypeFields := deepFields(fromType)
+				//fromTypeFields := deepFields(fromType, source)
+				fromTypeFields := deepFieldsWithDest(fromType, source, toType, dest)
 				//fmt.Printf("%#v", fromTypeFields)
+				//initNilFields(toType, dest)
 				// Copy from field to field or method
 				for _, field := range fromTypeFields {
 					name := field.Name
@@ -105,7 +107,7 @@ func Copy(toValue interface{}, fromValue interface{}) (err error) {
 				}
 
 				// Copy from method to field
-				for _, field := range deepFields(toType) {
+				for _, field := range deepFields(toType, dest) {
 					name := field.Name
 
 					var fromMethod reflect.Value
@@ -137,14 +139,84 @@ func Copy(toValue interface{}, fromValue interface{}) (err error) {
 	return
 }
 
-func deepFields(reflectType reflect.Type) []reflect.StructField {
+func deepFields(reflectType reflect.Type, reflectValue reflect.Value) []reflect.StructField {
 	var fields []reflect.StructField
 
 	if reflectType = indirectType(reflectType); reflectType.Kind() == reflect.Struct {
 		for i := 0; i < reflectType.NumField(); i++ {
 			v := reflectType.Field(i)
 			if v.Anonymous {
-				fields = append(fields, deepFields(v.Type)...)
+				value := indirect(reflectValue).Field(i)
+				if value.CanAddr() {
+					if value.IsNil() {
+						continue
+					}
+				}
+				fields = append(fields, deepFields(v.Type, value)...)
+			} else {
+				fields = append(fields, v)
+			}
+		}
+	}
+
+	return fields
+}
+
+func initNilFields(reflectType reflect.Type, reflectValue reflect.Value) {
+	reflectType = indirectType(reflectType)
+	if reflectType.Kind() != reflect.Struct {
+		return
+	}
+	for i := 0; i < reflectType.NumField(); i++ {
+		v := reflectType.Field(i)
+		if !v.Anonymous {
+			continue
+		}
+		value := indirect(reflectValue).Field(i)
+		if !value.CanAddr() {
+			continue
+		}
+		if !value.IsNil() {
+			continue
+		}
+		if !value.CanSet() {
+			continue
+		}
+		value.Set(reflect.New(v.Type.Elem()))
+		initNilFields(v.Type, value)
+	}
+}
+
+func deepFieldsWithDest(reflectType reflect.Type, reflectValue reflect.Value, reflectDestType reflect.Type, reflectDestValue reflect.Value) []reflect.StructField {
+	var fields []reflect.StructField
+
+	if reflectType = indirectType(reflectType); reflectType.Kind() == reflect.Struct {
+		for i := 0; i < reflectType.NumField(); i++ {
+			v := reflectType.Field(i)
+			if v.Anonymous {
+				value := indirect(reflectValue).Field(i)
+				var (
+					destT reflect.StructField
+					destV reflect.Value
+				)
+				if value.CanAddr() {
+					if value.IsNil() {
+						continue
+					}
+					if len(reflectDestType.Name()) > 0 {
+						reflectDestType = indirectType(reflectDestType)
+						if reflectDestType.Kind() == reflect.Struct {
+							if i < reflectDestType.NumField() {
+								destT = reflectDestType.Field(i)
+								destV = indirect(reflectDestValue).Field(i)
+								if v.Name == destT.Name && destT.Anonymous && destV.CanAddr() && destV.IsNil() && destV.CanSet() {
+									destV.Set(reflect.New(destT.Type.Elem()))
+								}
+							}
+						}
+					}
+				}
+				fields = append(fields, deepFieldsWithDest(v.Type, value, destT.Type, destV)...)
 			} else {
 				fields = append(fields, v)
 			}

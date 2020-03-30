@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jinzhu/copier"
+	"github.com/admpub/copier"
+	"github.com/webx-top/com"
 )
 
 type User struct {
@@ -386,4 +387,35 @@ func TestCopyEmptySliceFieldsWithSameUnderlyingTypes(t *testing.T) {
 	if !reflect.DeepEqual(obj2, expected) {
 		t.Errorf("Not all fields were copied correctly")
 	}
+}
+
+// https://github.com/jinzhu/copier/issues/31
+func TestNested(t *testing.T) {
+	type Nested struct {
+		A string
+	}
+	type ParentA struct {
+		*Nested
+	}
+	type parentB struct {
+		*Nested
+	}
+	type parentC struct {
+		*ParentA
+	}
+	a := ParentA{
+		Nested: &Nested{A: "a"},
+	}
+	b := parentB{}
+	copier.Copy(&b, &a)
+	com.Dump(b)
+
+	a1 := parentC{
+		ParentA: &a,
+	}
+	b1 := parentC{}
+
+	copier.Copy(&b1, &a1)
+	com.Dump(b1)
+	panic(``)
 }
