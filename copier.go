@@ -147,7 +147,7 @@ func deepFields(reflectType reflect.Type, reflectValue reflect.Value, prefix str
 			v := reflectType.Field(i)
 			if v.Anonymous {
 				value := indirect(reflectValue).Field(i)
-				if value.CanAddr() {
+				if value.Kind() == reflect.Ptr {
 					if value.IsNil() {
 						continue
 					}
@@ -183,7 +183,7 @@ func initNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix 
 			continue
 		}
 		value := indirect(reflectValue).Field(i)
-		if !value.CanAddr() {
+		if value.Kind() != reflect.Ptr {
 			continue
 		}
 		if !value.IsNil() {
