@@ -75,7 +75,7 @@ func Copy(toValue interface{}, fromValue interface{}) (err error) {
 				needInitFields := map[string]struct{}{}
 				fromTypeFields := deepFields(fromType, source, ``, needInitFields)
 				//fmt.Printf("%#v", fromTypeFields)
-				initNilFields(toType, dest, ``, needInitFields)
+				InitNilFields(toType, dest, ``, needInitFields)
 				// Copy from field to field or method
 				for _, field := range fromTypeFields {
 					name := field.Name
@@ -166,7 +166,8 @@ func deepFields(reflectType reflect.Type, reflectValue reflect.Value, prefix str
 	return fields
 }
 
-func initNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix string, needInitFields map[string]struct{}) {
+// InitNilFields initializes nil fields
+func InitNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix string, needInitFields map[string]struct{}) {
 	if needInitFields == nil {
 		return
 	}
@@ -194,7 +195,7 @@ func initNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix 
 		}
 		value.Set(reflect.New(v.Type.Elem()))
 		prefix += v.Name + `.`
-		initNilFields(v.Type, value, prefix, needInitFields)
+		InitNilFields(v.Type, value, prefix, needInitFields)
 	}
 }
 
