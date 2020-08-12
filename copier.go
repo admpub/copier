@@ -166,6 +166,9 @@ func deepFields(reflectType reflect.Type, reflectValue reflect.Value, prefix str
 	return fields
 }
 
+// AllNilFields 初始化所有nil字段
+var AllNilFields = map[string]struct{}{}
+
 // InitNilFields initializes nil fields
 func InitNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix string, needInitFields map[string]struct{}) {
 	if needInitFields == nil {
@@ -175,10 +178,13 @@ func InitNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix 
 	if reflectType.Kind() != reflect.Struct {
 		return
 	}
+	isAll := AllNilFields == needInitFields
 	for i := 0; i < reflectType.NumField(); i++ {
 		v := reflectType.Field(i)
-		if _, ok := needInitFields[prefix+v.Name]; !ok {
-			continue
+		if !isAll {
+			if _, ok := needInitFields[prefix+v.Name]; !ok {
+				continue
+			}
 		}
 		if !v.Anonymous {
 			continue
