@@ -180,7 +180,6 @@ func InitNilFields(reflectType reflect.Type, reflectValue reflect.Value, prefix 
 	if reflectType.Kind() != reflect.Struct {
 		return
 	}
-	isAll := AllNilFields == needInitFields
 	for i := 0; i < reflectType.NumField(); i++ {
 		v := reflectType.Field(i)
 		_, ok := needInitFields[prefix+v.Name]
