@@ -2,6 +2,11 @@ package copier
 
 import "reflect"
 
+// DeepFindFields deep finds all fields
+func DeepFindFields(reflectType reflect.Type, reflectValue reflect.Value, prefix string, needInitFields map[string]struct{}) []reflect.StructField {
+	return deepFieldsEx(reflectType, reflectValue, prefix, needInitFields)
+}
+
 func deepFieldsEx(reflectType reflect.Type, reflectValue reflect.Value, prefix string, needInitFields map[string]struct{}) []reflect.StructField {
 	var fields []reflect.StructField
 
