@@ -1,11 +1,16 @@
 package copier_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/admpub/copier"
-	"github.com/webx-top/com"
 )
+
+func dump(v interface{}) {
+	b, _ := json.MarshalIndent(v, "", "  ")
+	println(string(b))
+}
 
 // https://github.com/jinzhu/copier/issues/31
 func TestNested(t *testing.T) {
@@ -30,7 +35,7 @@ func TestNested(t *testing.T) {
 		panic(`no match`)
 	}
 
-	com.Dump(b)
+	dump(b)
 
 	a1 := parentC{
 		ParentA: &a,
@@ -38,7 +43,7 @@ func TestNested(t *testing.T) {
 	b1 := parentC{}
 
 	copier.Copy(&b1, &a1)
-	com.Dump(b1)
+	dump(b1)
 	if b1.A != a1.A {
 		panic(`no match`)
 	}
