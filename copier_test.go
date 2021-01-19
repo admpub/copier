@@ -1,13 +1,12 @@
 package copier_test
 
 import (
+	"database/sql"
 	"errors"
-	"reflect"
 	"testing"
 	"time"
 
 	"github.com/admpub/copier"
-	"github.com/webx-top/com"
 )
 
 type User struct {
@@ -34,7 +33,7 @@ type Employee struct {
 	EmployeID int64
 	DoubleAge int32
 	SuperRule string
-	Notes     []string
+	Notes     []*string
 	flags     []byte
 }
 
@@ -71,8 +70,15 @@ func checkEmployee(employee Employee, user User, t *testing.T, testCase string) 
 	if employee.SuperRule != "Super "+user.Role {
 		t.Errorf("%v: Copy to method doesn't work", testCase)
 	}
-	if !reflect.DeepEqual(employee.Notes, user.Notes) {
-		t.Errorf("%v: Copy from slice doen't work", testCase)
+
+	if len(employee.Notes) != len(user.Notes) {
+		t.Fatalf("%v: Copy from slice doesn't work, employee notes len: %v, user: %v", testCase, len(employee.Notes), len(user.Notes))
+	}
+
+	for idx, note := range user.Notes {
+		if note != *employee.Notes[idx] {
+			t.Fatalf("%v: Copy from slice doesn't work, notes idx: %v employee: %v user: %v", testCase, idx, *employee.Notes[idx], note)
+		}
 	}
 }
 
@@ -166,7 +172,7 @@ func TestCopyFromStructToSlice(t *testing.T) {
 }
 
 func TestCopyFromSliceToSlice(t *testing.T) {
-	users := []User{User{Name: "Jinzhu", Age: 18, Role: "Admin", Notes: []string{"hello world"}}, User{Name: "Jinzhu2", Age: 22, Role: "Dev", Notes: []string{"hello world", "hello"}}}
+	users := []User{{Name: "Jinzhu", Age: 18, Role: "Admin", Notes: []string{"hello world"}}, {Name: "Jinzhu2", Age: 22, Role: "Dev", Notes: []string{"hello world", "hello"}}}
 	employees := []Employee{}
 
 	if copier.Copy(&employees, users); len(employees) != 2 {
@@ -251,18 +257,18 @@ func TestEmbeddedAndBase(t *testing.T) {
 	}
 
 	base := Base{}
-	embeded := Embed{}
-	embeded.BaseField1 = 1
-	embeded.BaseField2 = 2
-	embeded.EmbedField1 = 3
-	embeded.EmbedField2 = 4
+	embedded := Embed{}
+	embedded.BaseField1 = 1
+	embedded.BaseField2 = 2
+	embedded.EmbedField1 = 3
+	embedded.EmbedField2 = 4
 
 	user := User{
 		Name: "testName",
 	}
-	embeded.User = &user
+	embedded.User = &user
 
-	copier.Copy(&base, &embeded)
+	copier.Copy(&base, &embedded)
 
 	if base.BaseField1 != 1 || base.User.Name != "testName" {
 		t.Error("Embedded fields not copied")
@@ -275,23 +281,726 @@ func TestEmbeddedAndBase(t *testing.T) {
 	}
 	base.User = &user1
 
-	copier.Copy(&embeded, &base)
-
-	if embeded.BaseField1 != 11 || embeded.User.Name != "testName1" {
+	copier.Copy(&embedded, &base)
+	if embedded.BaseField1 != 11 || embedded.User.Name != "testName1" {
 		t.Error("base fields not copied")
 	}
+}
+
+func TestStructField(t *testing.T) {
+	type Detail struct {
+		Info1 string
+		Info2 *string
+	}
+
+	type SimilarDetail struct {
+		Info1 string
+		Info2 *string
+	}
+
+	type UserWithDetailsPtr struct {
+		Details []*Detail
+		Detail  *Detail
+	}
+	type UserWithDetails struct {
+		Details []Detail
+		Detail  Detail
+	}
+	type UserWithSimilarDetailsPtr struct {
+		Detail *SimilarDetail
+	}
+	type UserWithSimilarDetails struct {
+		Detail SimilarDetail
+	}
+	type EmployeeWithDetails struct {
+		Detail Detail
+	}
+	type EmployeeWithDetailsPtr struct {
+		Detail *Detail
+	}
+	type EmployeeWithSimilarDetails struct {
+		Detail SimilarDetail
+	}
+	type EmployeeWithSimilarDetailsPtr struct {
+		Detail *SimilarDetail
+	}
+
+	optionsDeepCopy := copier.Option{
+		DeepCopy: true,
+	}
+
+	checkDetail := func(t *testing.T, source Detail, target Detail) {
+		if source.Info1 != target.Info1 {
+			t.Errorf("info1 is diff: source: %v, target: %v", source.Info1, target.Info1)
+		}
+
+		if (source.Info2 != nil || target.Info2 != nil) && (*source.Info2 != *target.Info2) {
+			t.Errorf("info2 is diff: source: %v, target: %v", *source.Info2, *target.Info2)
+		}
+	}
+
+	t.Run("Should work without deepCopy", func(t *testing.T) {
+		t.Run("Should work with same type and both ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetailsPtr{
+				Detail:  &Detail{Info1: "hello", Info2: &info2},
+				Details: []*Detail{{Info1: "hello", Info2: &info2}},
+			}
+			to := UserWithDetailsPtr{}
+			copier.Copy(&to, from)
+
+			checkDetail(t, *from.Detail, *to.Detail)
+
+			*to.Detail.Info2 = "new value"
+			if *from.Detail.Info2 != *to.Detail.Info2 {
+				t.Fatalf("DeepCopy not enabled")
+			}
+
+			if len(to.Details) != len(to.Details) {
+				t.Fatalf("slice should be copied")
+			}
+
+			for idx, detail := range from.Details {
+				checkDetail(t, *detail, *to.Details[idx])
+			}
+		})
+
+		t.Run("Should work with same type and both not ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetails{
+				Detail:  Detail{Info1: "hello", Info2: &info2},
+				Details: []Detail{{Info1: "hello", Info2: &info2}},
+			}
+			to := UserWithDetails{}
+			copier.Copy(&to, from)
+
+			checkDetail(t, from.Detail, to.Detail)
+
+			*to.Detail.Info2 = "new value"
+			if *from.Detail.Info2 != *to.Detail.Info2 {
+				t.Fatalf("DeepCopy not enabled")
+			}
+
+			if len(to.Details) != len(to.Details) {
+				t.Fatalf("slice should be copied")
+			}
+
+			for idx, detail := range from.Details {
+				checkDetail(t, detail, to.Details[idx])
+			}
+		})
+
+		t.Run("Should work with different type and both ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetailsPtr{Detail: &Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetailsPtr{}
+			copier.Copy(&to, from)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+
+		t.Run("Should work with different type and both not ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetails{Detail: Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetails{}
+			copier.Copy(&to, from)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+
+		t.Run("Should work with from ptr field and to not ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetailsPtr{Detail: &Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetails{}
+			copier.Copy(&to, from)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+
+		t.Run("Should work with from not ptr field and to ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetails{Detail: Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetailsPtr{}
+			copier.Copy(&to, from)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+	})
+
+	t.Run("Should work with deepCopy", func(t *testing.T) {
+		t.Run("Should work with same type and both ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetailsPtr{
+				Detail:  &Detail{Info1: "hello", Info2: &info2},
+				Details: []*Detail{{Info1: "hello", Info2: &info2}},
+			}
+			to := UserWithDetailsPtr{}
+			copier.CopyWithOption(&to, from, optionsDeepCopy)
+
+			checkDetail(t, *from.Detail, *to.Detail)
+
+			*to.Detail.Info2 = "new value"
+			if *from.Detail.Info2 == *to.Detail.Info2 {
+				t.Fatalf("DeepCopy enabled")
+			}
+
+			if len(to.Details) != len(to.Details) {
+				t.Fatalf("slice should be copied")
+			}
+
+			for idx, detail := range from.Details {
+				checkDetail(t, *detail, *to.Details[idx])
+			}
+		})
+		t.Run("Should work with same type and both not ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetails{
+				Detail:  Detail{Info1: "hello", Info2: &info2},
+				Details: []Detail{{Info1: "hello", Info2: &info2}},
+			}
+			to := UserWithDetails{}
+			copier.CopyWithOption(&to, from, optionsDeepCopy)
+
+			checkDetail(t, from.Detail, to.Detail)
+
+			*to.Detail.Info2 = "new value"
+			if *from.Detail.Info2 == *to.Detail.Info2 {
+				t.Fatalf("DeepCopy enabled")
+			}
+
+			if len(to.Details) != len(to.Details) {
+				t.Fatalf("slice should be copied")
+			}
+
+			for idx, detail := range from.Details {
+				checkDetail(t, detail, to.Details[idx])
+			}
+		})
+
+		t.Run("Should work with different type and both ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetailsPtr{Detail: &Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetailsPtr{}
+			copier.CopyWithOption(&to, from, optionsDeepCopy)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+
+		t.Run("Should work with different type and both not ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetails{Detail: Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetails{}
+			copier.CopyWithOption(&to, from, optionsDeepCopy)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+
+		t.Run("Should work with from ptr field and to not ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetailsPtr{Detail: &Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetails{}
+			copier.CopyWithOption(&to, from, optionsDeepCopy)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+
+		t.Run("Should work with from not ptr field and to ptr field", func(t *testing.T) {
+			info2 := "world"
+			from := UserWithDetails{Detail: Detail{Info1: "hello", Info2: &info2}}
+			to := EmployeeWithDetailsPtr{}
+			copier.CopyWithOption(&to, from, optionsDeepCopy)
+
+			newValue := "new value"
+			to.Detail.Info2 = &newValue
+
+			if to.Detail.Info1 == "" {
+				t.Errorf("should not be empty")
+			}
+			if to.Detail.Info1 != from.Detail.Info1 {
+				t.Errorf("should be the same")
+			}
+			if to.Detail.Info2 == from.Detail.Info2 {
+				t.Errorf("should be different")
+			}
+		})
+	})
+}
+
+func TestMapInterface(t *testing.T) {
+	type Inner struct {
+		IntPtr          *int
+		unexportedField string
+	}
+
+	type Outer struct {
+		Inner Inner
+	}
+
+	type DriverOptions struct {
+		GenOptions map[string]interface{}
+	}
+
+	t.Run("Should work without deepCopy", func(t *testing.T) {
+		intVal := 5
+		outer := Outer{
+			Inner: Inner{
+				IntPtr:          &intVal,
+				unexportedField: "hello",
+			},
+		}
+		from := DriverOptions{
+			GenOptions: map[string]interface{}{
+				"key": outer,
+			},
+		}
+		to := DriverOptions{}
+		if err := copier.Copy(&to, &from); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		*to.GenOptions["key"].(Outer).Inner.IntPtr = 6
+
+		if to.GenOptions["key"].(Outer).Inner.IntPtr != from.GenOptions["key"].(Outer).Inner.IntPtr {
+			t.Errorf("should be the same")
+		}
+	})
+
+	t.Run("Should work with deepCopy", func(t *testing.T) {
+		intVal := 5
+		outer := Outer{
+			Inner: Inner{
+				IntPtr:          &intVal,
+				unexportedField: "Hello",
+			},
+		}
+		from := DriverOptions{
+			GenOptions: map[string]interface{}{
+				"key": outer,
+			},
+		}
+		to := DriverOptions{}
+		if err := copier.CopyWithOption(&to, &from, copier.Option{
+			DeepCopy: true,
+		}); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		*to.GenOptions["key"].(Outer).Inner.IntPtr = 6
+
+		if to.GenOptions["key"].(Outer).Inner.IntPtr == from.GenOptions["key"].(Outer).Inner.IntPtr {
+			t.Errorf("should be different")
+		}
+	})
+}
+
+func TestInterface(t *testing.T) {
+	type Inner struct {
+		IntPtr *int
+	}
+
+	type Outer struct {
+		Inner Inner
+	}
+
+	type DriverOptions struct {
+		GenOptions interface{}
+	}
+
+	t.Run("Should work without deepCopy", func(t *testing.T) {
+		intVal := 5
+		outer := Outer{
+			Inner: Inner{
+				IntPtr: &intVal,
+			},
+		}
+		from := DriverOptions{
+			GenOptions: outer,
+		}
+		to := DriverOptions{}
+		if err := copier.Copy(&to, from); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		*to.GenOptions.(Outer).Inner.IntPtr = 6
+
+		if to.GenOptions.(Outer).Inner.IntPtr != from.GenOptions.(Outer).Inner.IntPtr {
+			t.Errorf("should be the same")
+		}
+	})
+
+	t.Run("Should work with deepCopy", func(t *testing.T) {
+		intVal := 5
+		outer := Outer{
+			Inner: Inner{
+				IntPtr: &intVal,
+			},
+		}
+		from := DriverOptions{
+			GenOptions: outer,
+		}
+		to := DriverOptions{}
+		if err := copier.CopyWithOption(&to, &from, copier.Option{
+			DeepCopy: true,
+		}); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		*to.GenOptions.(Outer).Inner.IntPtr = 6
+
+		if to.GenOptions.(Outer).Inner.IntPtr == from.GenOptions.(Outer).Inner.IntPtr {
+			t.Errorf("should be different")
+		}
+	})
+}
+
+func TestSlice(t *testing.T) {
+	type ElemOption struct {
+		Value int
+	}
+
+	type A struct {
+		X       []int
+		Options []ElemOption
+	}
+
+	type B struct {
+		X       []int
+		Options []ElemOption
+	}
+
+	t.Run("Should work with simple slice", func(t *testing.T) {
+		from := []int{1, 2}
+		var to []int
+
+		if err := copier.Copy(&to, from); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from[0] = 3
+		from[1] = 4
+
+		if to[0] == from[0] {
+			t.Errorf("should be different")
+		}
+
+		if len(to) != len(from) {
+			t.Errorf("should be the same length, got len(from): %v, len(to): %v", len(from), len(to))
+		}
+	})
+
+	t.Run("Should work with empty slice", func(t *testing.T) {
+		from := []int{}
+		to := []int{}
+
+		if err := copier.Copy(&to, from); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		if to == nil {
+			t.Errorf("should be not nil")
+		}
+	})
+
+	t.Run("Should work without deepCopy", func(t *testing.T) {
+		x := []int{1, 2}
+		options := []ElemOption{
+			{Value: 10},
+			{Value: 20},
+		}
+		from := A{X: x, Options: options}
+		to := B{}
+
+		if err := copier.Copy(&to, from); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from.X[0] = 3
+		from.X[1] = 4
+		from.Options[0].Value = 30
+		from.Options[1].Value = 40
+
+		if to.X[0] != from.X[0] {
+			t.Errorf("should be the same")
+		}
+
+		if len(to.X) != len(from.X) {
+			t.Errorf("should be the same length, got len(from.X): %v, len(to.X): %v", len(from.X), len(to.X))
+		}
+
+		if to.Options[0].Value != from.Options[0].Value {
+			t.Errorf("should be the same")
+		}
+
+		if to.Options[0].Value != from.Options[0].Value {
+			t.Errorf("should be the same")
+		}
+
+		if len(to.Options) != len(from.Options) {
+			t.Errorf("should be the same")
+		}
+	})
+
+	t.Run("Should work with deepCopy", func(t *testing.T) {
+		x := []int{1, 2}
+		options := []ElemOption{
+			{Value: 10},
+			{Value: 20},
+		}
+		from := A{X: x, Options: options}
+		to := B{}
+
+		if err := copier.CopyWithOption(&to, from, copier.Option{
+			DeepCopy: true,
+		}); nil != err {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from.X[0] = 3
+		from.X[1] = 4
+		from.Options[0].Value = 30
+		from.Options[1].Value = 40
+
+		if to.X[0] == from.X[0] {
+			t.Errorf("should be different")
+		}
+
+		if len(to.X) != len(from.X) {
+			t.Errorf("should be the same length, got len(from.X): %v, len(to.X): %v", len(from.X), len(to.X))
+		}
+
+		if to.Options[0].Value == from.Options[0].Value {
+			t.Errorf("should be different")
+		}
+
+		if len(to.Options) != len(from.Options) {
+			t.Errorf("should be the same")
+		}
+	})
+}
+
+func TestAnonymousFields(t *testing.T) {
+	t.Run("Should work with unexported ptr fields", func(t *testing.T) {
+		type nested struct {
+			A string
+		}
+		type parentA struct {
+			*nested
+		}
+		type parentB struct {
+			*nested
+		}
+
+		from := parentA{nested: &nested{A: "a"}}
+		to := parentB{}
+
+		err := copier.CopyWithOption(&to, &from, copier.Option{
+			DeepCopy: true,
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from.nested.A = "b"
+
+		if to.nested != nil {
+			t.Errorf("should be nil")
+		}
+	})
+	t.Run("Should work with unexported fields", func(t *testing.T) {
+		type nested struct {
+			A string
+		}
+		type parentA struct {
+			nested
+		}
+		type parentB struct {
+			nested
+		}
+
+		from := parentA{nested: nested{A: "a"}}
+		to := parentB{}
+
+		err := copier.CopyWithOption(&to, &from, copier.Option{
+			DeepCopy: true,
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from.nested.A = "b"
+
+		if to.nested.A == from.nested.A {
+			t.Errorf("should be different")
+		}
+	})
+
+	t.Run("Should work with exported ptr fields", func(t *testing.T) {
+		type Nested struct {
+			A string
+		}
+		type parentA struct {
+			*Nested
+		}
+		type parentB struct {
+			*Nested
+		}
+
+		fieldValue := "a"
+		from := parentA{Nested: &Nested{A: fieldValue}}
+		to := parentB{}
+
+		err := copier.CopyWithOption(&to, &from, copier.Option{
+			DeepCopy: true,
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from.Nested.A = "b"
+
+		if to.Nested.A != fieldValue {
+			t.Errorf("should not change")
+		}
+	})
+
+	t.Run("Should work with exported fields", func(t *testing.T) {
+		type Nested struct {
+			A string
+		}
+		type parentA struct {
+			Nested
+		}
+		type parentB struct {
+			Nested
+		}
+
+		fieldValue := "a"
+		from := parentA{Nested: Nested{A: fieldValue}}
+		to := parentB{}
+
+		err := copier.CopyWithOption(&to, &from, copier.Option{
+			DeepCopy: true,
+		})
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+			return
+		}
+
+		from.Nested.A = "b"
+
+		if to.Nested.A != fieldValue {
+			t.Errorf("should not change")
+		}
+	})
+}
+
+type someStruct struct {
+	IntField  int
+	UIntField uint64
 }
 
 type structSameName1 struct {
 	A string
 	B int64
 	C time.Time
+	D string
+	E *someStruct
 }
 
 type structSameName2 struct {
 	A string
 	B time.Time
 	C int64
+	D string
+	E *someStruct
 }
 
 func TestCopyFieldsWithSameNameButDifferentTypes(t *testing.T) {
@@ -304,6 +1013,68 @@ func TestCopyFieldsWithSameNameButDifferentTypes(t *testing.T) {
 
 	if obj2.A != obj1.A {
 		t.Errorf("Field A should be copied")
+	}
+}
+
+type Foo1 struct {
+	Name string
+	Age  int32
+}
+
+type Foo2 struct {
+	Name string
+}
+
+type StructWithMap1 struct {
+	Map map[int]Foo1
+}
+
+type StructWithMap2 struct {
+	Map map[int32]Foo2
+}
+
+func TestCopyMapOfStruct(t *testing.T) {
+	obj1 := StructWithMap1{Map: map[int]Foo1{2: {Name: "A pure foo"}}}
+	obj2 := &StructWithMap2{}
+	err := copier.Copy(obj2, obj1)
+	if err != nil {
+		t.Error("Should not raise error")
+	}
+	for k, v1 := range obj1.Map {
+		v2, ok := obj2.Map[int32(k)]
+		if !ok || v1.Name != v2.Name {
+			t.Errorf("Map should be copied")
+		}
+	}
+}
+
+func TestCopyMapOfInt(t *testing.T) {
+	map1 := map[int]int{3: 6, 4: 8}
+	map2 := map[int32]int8{}
+	err := copier.Copy(&map2, map1)
+	if err != nil {
+		t.Error("Should not raise error")
+	}
+
+	for k, v1 := range map1 {
+		v2, ok := map2[int32(k)]
+		if !ok || v1 != int(v2) {
+			t.Errorf("Map should be copied")
+		}
+	}
+}
+
+func TestCopyNonEmpty(t *testing.T) {
+	from := structSameName2{D: "456", E: &someStruct{IntField: 100, UIntField: 1000}}
+	to := &structSameName1{A: "123", B: 2, C: time.Now(), D: "123", E: &someStruct{UIntField: 5000}}
+	if err := copier.CopyWithOption(to, &from, copier.Option{IgnoreEmpty: true}); err != nil {
+		t.Error("Should not raise error")
+	}
+
+	if to.A == from.A {
+		t.Errorf("Field A should not be copied")
+	} else if to.D != from.D {
+		t.Errorf("Field D should be copied")
 	}
 }
 
@@ -342,86 +1113,74 @@ func TestScanner(t *testing.T) {
 	}
 }
 
-type stringType string
-type stringType2 string
+func TestScanFromPtrToSqlNullable(t *testing.T) {
 
-type structSameUnderlyingType1 struct {
-	BaseToBase               []string
-	BaseToUserDefined        []string
-	UserDefinedToBase        []stringType
-	UserDefinedToUserDefined []stringType
-}
+	var (
+		from struct {
+			S    string
+			Sptr *string
+			T1   sql.NullTime
+			T2   sql.NullTime
+			T3   *time.Time
+		}
 
-type structSameUnderlyingType2 struct {
-	BaseToBase               []string
-	BaseToUserDefined        []stringType
-	UserDefinedToBase        []string
-	UserDefinedToUserDefined []stringType2
-}
+		to struct {
+			S    sql.NullString
+			Sptr sql.NullString
+			T1   time.Time
+			T2   *time.Time
+			T3   sql.NullTime
+		}
 
-func TestCopySliceFieldsWithSameUnderlyingTypes(t *testing.T) {
-	obj1 := structSameUnderlyingType1{[]string{"hello world", "welcome"}, []string{"hello world", "welcome"}, []stringType{"hello world", "welcome"}, []stringType{"hello world", "welcome"}}
-	obj2 := structSameUnderlyingType2{}
-	err := copier.Copy(&obj2, &obj1)
+		s string
+
+		err error
+	)
+
+	s = "test"
+	from.S = s
+	from.Sptr = &s
+
+	if from.T1.Valid || from.T2.Valid {
+		t.Errorf("Must be not valid")
+	}
+
+	err = copier.Copy(&to, from)
 	if err != nil {
 		t.Error("Should not raise error")
 	}
 
-	expected := structSameUnderlyingType2{[]string{"hello world", "welcome"}, []stringType{"hello world", "welcome"}, []string{"hello world", "welcome"}, []stringType2{"hello world", "welcome"}}
-
-	if !reflect.DeepEqual(obj2, expected) {
-		t.Errorf("Not all fields were copied correctly")
+	if !to.T1.IsZero() {
+		t.Errorf("to.T1 should be Zero but %v", to.T1)
 	}
-}
 
-func TestCopyEmptySliceFieldsWithSameUnderlyingTypes(t *testing.T) {
-	obj1 := structSameUnderlyingType1{[]string{}, []string{}, []stringType{}, []stringType{}}
-	obj2 := structSameUnderlyingType2{}
-	err := copier.Copy(&obj2, &obj1)
+	if to.T2 != nil && !to.T2.IsZero() {
+		t.Errorf("to.T2 should be Zero but %v", to.T2)
+	}
+
+	now := time.Now()
+
+	from.T1.Scan(now)
+	from.T2.Scan(now)
+
+	err = copier.Copy(&to, from)
 	if err != nil {
 		t.Error("Should not raise error")
 	}
 
-	expected := structSameUnderlyingType2{[]string{}, []stringType{}, []string{}, []stringType2{}}
-
-	if !reflect.DeepEqual(obj2, expected) {
-		t.Errorf("Not all fields were copied correctly")
-	}
-}
-
-// https://github.com/jinzhu/copier/issues/31
-func TestNested(t *testing.T) {
-	type Nested struct {
-		A string
-	}
-	type ParentA struct {
-		*Nested
-	}
-	type parentB struct {
-		*Nested
-	}
-	type parentC struct {
-		*ParentA
-	}
-	a := ParentA{
-		Nested: &Nested{A: "a"},
-	}
-	b := parentB{}
-	copier.Copy(&b, &a)
-	if b.A != a.A {
-		panic(`no match`)
+	if to.S.String != from.S {
+		t.Errorf("Field S should be copied")
 	}
 
-	com.Dump(b)
-
-	a1 := parentC{
-		ParentA: &a,
+	if to.Sptr.String != *from.Sptr {
+		t.Errorf("Field Sptr should be copied")
 	}
-	b1 := parentC{}
 
-	copier.Copy(&b1, &a1)
-	com.Dump(b1)
-	if b1.A != a1.A {
-		panic(`no match`)
+	if from.T1.Time != to.T1 {
+		t.Errorf("Fields T1 fields should be equal")
+	}
+
+	if from.T2.Time != *to.T2 {
+		t.Errorf("Fields T2 fields should be equal")
 	}
 }
